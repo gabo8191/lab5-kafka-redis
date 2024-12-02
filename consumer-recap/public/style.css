@@ -1,0 +1,9 @@
+#movie-list {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.list-group-item {
+    font-size: 1.2em;
+    background-color: #f8f9fa;
+}

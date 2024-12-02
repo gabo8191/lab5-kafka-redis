@@ -1,0 +1,5 @@
+.movie-card img {
+    cursor: pointer;
+    height: 300px;
+    object-fit: cover;
+}
