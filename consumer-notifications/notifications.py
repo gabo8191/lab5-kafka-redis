@@ -1,77 +1,92 @@
-import os
+from confluent_kafka import Consumer, KafkaException
 import smtplib
 from email.mime.text import MIMEText
 import json
-from kafka import KafkaConsumer
-from dotenv import load_dotenv
 
-# Cargar las variables del entorno
-load_dotenv()
+# Configuración del consumidor de Kafka
+consumer_config = {
+    'bootstrap.servers': 'localhost:9092',  # Cambia esto según tu configuración
+    'group.id': 'notifications-group',
+    'auto.offset.reset': 'earliest'
+}
 
-# Configuración de Kafka
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
-TOPIC = "movie-selection"
+consumer = Consumer(consumer_config)
 
-# Configuración de correo electrónico
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-
+# Suscribirse al tema
+topic = 'movie-selection'
+consumer.subscribe([topic])
 
 # Función para enviar correos
-def send_email(to_email, subject, body):
+def send_email(parent_email, username, age, movie):
+    sender_email = "brunocamachosegundo@gmail.com"  # Cambia a tu correo
+    sender_password = "pxrl rlht coca eikd"     # Cambia a tu contraseña
+
+    # Contenido del correo
+    subject = f"Alerta: Usuario menor viendo contenido"
+    body = f"""
+    Hola,
+
+    El usuario '{username}', de {age} años, ha accedido a la película '{movie}'.
+
+    Por favor, monitoree esta actividad si es necesario.
+
+    Saludos,
+    Equipo de Notificaciones
+    """
+
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = sender_email
+    msg['To'] = parent_email
+
+    # Enviar el correo
     try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = to_email
-
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
-        print(f"Correo enviado a {to_email}")
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, parent_email, msg.as_string())
+        print(f"Correo enviado a {parent_email}")
     except Exception as e:
-        print(f"Error enviando correo: {e}")
+        print(f"Error al enviar correo: {e}")
 
+# Consumiendo mensajes de Kafka
+try:
+    print("Iniciando consumidor de notificaciones...")
+    while True:
+        msg = consumer.poll(1.0)  # Espera hasta 1 segundo para recibir mensajes
+        if msg is None:
+            continue
+        if msg.error():
+            if msg.error().code() == KafkaException._PARTITION_EOF:
+                # Fin de la partición
+                continue
+            else:
+                print(f"Error en el consumidor: {msg.error()}")
+                break
 
-# Configuración del Consumer de Kafka
-consumer = KafkaConsumer(
-    TOPIC,
-    bootstrap_servers=[KAFKA_BROKER],
-    auto_offset_reset="earliest",
-    group_id="notifications-group",
-    enable_auto_commit=True,
-)
+        # Procesar el mensaje recibido
+        try:
+            data = json.loads(msg.value().decode('utf-8'))  # Decodificar mensaje
+            username = data.get('username')
+            age = int(data.get('age'))
+            parent_email = data.get('parentEmail')
+            movie = data.get('movie')
 
-print("Esperando mensajes...")
+            # Verificar datos
+            if not all([username, age, movie]):
+                print("Mensaje inválido, faltan campos requeridos.")
+                continue
 
-# Procesar mensajes
-for message in consumer:
-    try:
-        # Decodificar el mensaje recibido
-        data = json.loads(message.value.decode("utf-8"))
-        username = data["username"]
-        age = data["age"]
-        parent_email = data["parentEmail"]
-        movie = data["movie"]
-        timestamp = data["timestamp"]
+            # Lógica para menores de edad
+            if age < 18 and parent_email:
+                send_email(parent_email, username, age, movie)
+            else:
+                print(f"Usuario {username} con {age} años no requiere notificación.")
 
-        print(f"Evento recibido: {data}")
+        except Exception as e:
+            print(f"Error procesando el mensaje: {e}")
 
-        # Enviar correo si el usuario es menor de edad
-        if age < 18:
-            email_body = (
-                f"Estimado/a,\n\n"
-                f"El usuario {username} seleccionó la película '{movie}' el {timestamp}.\n"
-                f"Por favor, tome las medidas que considere necesarias.\n\n"
-                f"Saludos,\nEl equipo de notificaciones."
-            )
-            send_email(
-                parent_email,
-                f"Notificación de película seleccionada: {movie}",
-                email_body,
-            )
-    except Exception as e:
-        print(f"Error procesando mensaje: {e}")
+except KeyboardInterrupt:
+    print("Deteniendo consumidor...")
+
+finally:
+    consumer.close()

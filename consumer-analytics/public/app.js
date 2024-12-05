@@ -1,4 +1,4 @@
-const socket = io('http://localhost:3001');
+const socket = io.connect('http://localhost:3002');
 
 // Función para actualizar la lista de las top 10 películas
 function updateTop10(movies) {
